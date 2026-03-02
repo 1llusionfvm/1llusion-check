@@ -1,65 +1,48 @@
 param([string]$code = "1llusion_Session")
 
-# --- CONFIGURAZIONE ---
-$webhookUrl = "https://discord.com/api/webhooks/1478077312426573824/gxsbrnhJPaQ2VuH4eDbd-gAtC7WlrcQSz_YUqLfEykhGsoqC2y3HWTFAmp9phW1pYtIu"
-$logoSmall = "https://tuosito.it/logo_small.png" # Logo piccolo per l'embed
+$webhook = "https://discord.com/api/webhooks/1478077312426573824/gxsbrnhJPaQ2VuH4eDbd-gAtC7WlrcQSz_YUqLfEykhGsoqC2y3HWTFAmp9phW1pYtIu"
+$thumb = "https://tuosito.it/logo_small.png"
 
-# --- ANALISI HARDWARE & DMA ---
-Write-Host "[*] Estrazione metadati hardware e analisi DMA..." -ForegroundColor Cyan
+Write-Host "Analisi in corso..." -ForegroundColor Cyan
 
-# Raccolta Seriali
-$cs = Get-CimInstance Win32_ComputerSystemProduct
-$bb = Get-CimInstance Win32_BaseBoard
+# Raccolta dati
+$sys = Get-CimInstance Win32_ComputerSystemProduct
+$board = Get-CimInstance Win32_BaseBoard
 $bios = Get-CimInstance Win32_BIOS
 $cpu = Get-CimInstance Win32_Processor
 
-$uuid = if ($cs.UUID) { $cs.UUID.Trim() } else { "N/D" }
-$bbS = if ($bb.SerialNumber) { $bb.SerialNumber.Trim() } else { "N/D" }
-$biosS = if ($bios.SerialNumber) { $bios.SerialNumber.Trim() } else { "N/D" }
-$cpuI = if ($cpu.ProcessorId) { $cpu.ProcessorId.Trim() } else { "N/D" }
+$id_uuid = if ($sys.UUID) { $sys.UUID.Trim() } else { "ND" }
+$id_board = if ($board.SerialNumber) { $board.SerialNumber.Trim() } else { "ND" }
+$id_bios = if ($bios.SerialNumber) { $bios.SerialNumber.Trim() } else { "ND" }
+$id_cpu = if ($cpu.ProcessorId) { $cpu.ProcessorId.Trim() } else { "ND" }
 
-# SHA256 Hash
-$concat = "$uuid|$bbS|$biosS|$cpuI"
-$sha256 = [System.Security.Cryptography.SHA256]::Create()
-$hash = ($sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($concat)) | ForEach-Object { $_.ToString("x2") }) -join ''
+# Hash SHA256
+$ctx = "$id_uuid|$id_board|$id_bios|$id_cpu"
+$hasher = [System.Security.Cryptography.SHA256]::Create()
+$final_hash = ($hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($ctx)) | ForEach-Object { $_.ToString("x2") }) -join ''
 
 # Lista Dischi
-$disks = Get-CimInstance Win32_DiskDrive | ForEach-Object { "$($_.Model): $($_.SerialNumber)" }
-$diskList = $disks -join "\n"
+$d_list = (Get-CimInstance Win32_DiskDrive | ForEach-Object { "$($_.Model) - $($_.SerialNumber)" }) -join "\n"
 
-# DMA Check
-function D([string]$b) { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b)) }
-$dmaStatus = "PULITO"
-$fpgaVendors = @((D 'VkVOXzEwRUU='), (D 'VkVOXzExNzI='))
-$pnp = Get-CimInstance Win32_PnPEntity
-foreach ($dev in $pnp) {
-    foreach ($v in $fpgaVendors) { if ($dev.DeviceID -like "*$v*") { $dmaStatus = "RILEVATA ($($dev.Name))" } }
-}
+# Costruzione campi Embed (Nomi semplici senza simboli)
+$f1 = @{ name = "User Session"; value = "$env:USERNAME / $code"; inline = $true }
+$f2 = @{ name = "PC Hash"; value = "$final_hash"; inline = $false }
+$f3 = @{ name = "UUID"; value = "$id_uuid"; inline = $true }
+$f4 = @{ name = "Board SN"; value = "$id_board"; inline = $true }
+$f5 = @{ name = "Disks"; value = "```\n$d_list\n```"; inline = $false }
 
-# --- COSTRUZIONE EMBED (Senza caratteri speciali) ---
-$embed = @{
-    title = "1llusion. | Report Forense Integrale"
+$emb = @{
+    title = "1llusion Forensic Report"
     color = 3447003
-    thumbnail = @{ url = $logoSmall }
-    fields = @(
-        @{ name = "Utente / Sessione"; value = "``$env:USERNAME / $code``"; inline = $true }
-        @{ name = "HWID SHA256 HASH"; value = "``$hash``"; inline = $false }
-        @{ name = "UUID Sistema"; value = "``$uuid``"; inline = $false }
-        @{ name = "Motherboard SN"; value = "``$bbS``"; inline = $true }
-        @{ name = "BIOS Serial"; value = "``$biosS``"; inline = $true }
-        @{ name = "Hardware DMA Check"; value = "**$dmaStatus**"; inline = $true }
-        @{ name = "Seriali Dischi (Fisici)"; value = "```\n$diskList\n```"; inline = $false }
-    )
-    footer = @{ text = "1llusion. Security Engine - $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')" }
+    thumbnail = @{ url = $thumb }
+    fields = @($f1, $f2, $f3, $f4, $f5)
 }
 
-# --- INVIO ---
-$payload = @{ embeds = @($embed) } | ConvertTo-Json -Depth 10
+# Invio
+$json = @{ embeds = @($emb) } | ConvertTo-Json -Depth 5
 try {
-    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
-    Write-Host "[+] Report inviato correttamente." -ForegroundColor Green
+    Invoke-RestMethod -Uri $webhook -Method Post -Body $json -ContentType "application/json"
+    Write-Host "Inviato!" -ForegroundColor Green
 } catch {
-    Write-Host "[-] Errore invio Webhook." -ForegroundColor Red
+    Write-Host "Errore Webhook" -ForegroundColor Red
 }
-
-Start-Sleep -Seconds 2
